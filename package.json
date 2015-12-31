@@ -1,0 +1,28 @@
+{
+  "name": "crow-telnet",
+  "version": "0.0.1",
+  "description": "Node js telnet client",
+  "main": "src/crow.js",
+  "scripts": {
+    "test": "./node_modules/.bin/mocha test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thecav/crow-telnet.git"
+  },
+  "keywords": [
+    "telnet",
+    "node",
+    "js"
+  ],
+  "author": "Chris Palmer",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/thecav/crow-telnet/issues"
+  },
+  "homepage": "https://github.com/thecav/crow-telnet#readme",
+  "devDependencies": {
+    "chai": "^3.4.1",
+    "mocha": "^2.3.4"
+  }
+}
