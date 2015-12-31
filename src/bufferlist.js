@@ -1,12 +1,12 @@
 
 var assert = require("assert");
-
+var util = require("util");
 
 /**
- * Class that holds multiple buffers and presents an interface as
- * though they were all concatenated in a large buffer.  No data
- * from inserted buffers is copied unless the full logically
- * contained buffer is requested.
+ * Class that holds multiple buffers and presents them as
+ * though they were all concatenated in a large buffer.
+ * However, no data from the inserted buffers is copied
+ * unless the full logically contained buffer is requested.
  *
  *     var a = new Buffer(10);
  *     var b = new Buffer(5);
@@ -15,7 +15,7 @@ var assert = require("assert");
  *     buf.push(a);
  *     buf.push(b);
  *
- *     buf.length === 15;
+ *     assert(buf.length === 15);
  *
  *     var fullBuffer = buf.getBuffer(); // copy
  *
@@ -23,6 +23,8 @@ var assert = require("assert");
 function BufferList() {
     this._buffers = [];
 }
+
+// PUBLIC METHODS
 
 BufferList.prototype.push = function(buffer) {
     this._buffers.push(buffer);
@@ -47,6 +49,12 @@ BufferList.prototype.get = function(index) {
 };
 
 BufferList.prototype.getBuffer = function() {
+    // Special case if we only hold one buffer to just return it
+    // No need to allocate and copy into a new one
+    if (this._buffers.length === 1) {
+        return this._buffers[0];
+    }
+
     var result = new Buffer(this.length);
     var index = 0;
     this._buffers.forEach(function(buffer) {
@@ -55,6 +63,16 @@ BufferList.prototype.getBuffer = function() {
     });
     return result;
 };
+
+BufferList.prototype.toString = function() {
+    return this.getBuffer().toString();
+};
+
+BufferList.prototype.inspect = function() {
+    return util.inspect(this.getBuffer());
+};
+
+// PUBLIC PROPERTIES
 
 Object.defineProperty(BufferList.prototype, "length", {
     get: function() {

@@ -5,14 +5,10 @@ var net = require('net');
 var util = require('util');
 var EventEmitter = require('events').EventEmitter;
 
-var telnetutil = require('./telnetutil');
+var TelnetUtil = require('./telnetutil');
+var BufferList = require('./bufferlist');
 
-
-var log = function() {
-    var args = Array.prototype.slice.call(arguments);
-    console.log.apply(console, args.unshift("Telnet: "));
-};
-
+var DEBUG = false;
 
 var OP = {
     SE:   0xf0,
@@ -35,26 +31,36 @@ var STATE_SB     = 6;
 var STATE_SB_IAC = 7;
 
 
+var log = function() {
+    if (!DEBUG) {
+        return;
+    }
+    var args = Array.prototype.slice.call(arguments);
+    args.unshift("Telnet: ");
+    console.log.apply(console, args);
+};
+
+
+
 var Telnet = function() {
     this._socket = null;
     this._connected = false;
     this._closed = false;
     this._options = {};
     this._dataState = STATE_READ;
-    this._prevBuffers = [];
+    this._buffer = new BufferList();
 };
 
 util.inherits(Telnet, EventEmitter);
 
-
 // PUBLIC METHODS
 
-Telnet.prototype.connect = function(params) {
+Telnet.prototype.connect = function(params, socket) {
     assert(!this._socket, "Connection already open");
     assert(typeof params.host === "string", "Invalid host");
     assert(typeof params.port === "number", "Invalid port");
 
-    this._socket = new net.Socket();
+    this._socket = socket || new net.Socket();
     this._socket.on("connect", this._onSocketConnect.bind(this));
     this._socket.on("lookup",  this._onSocketLookup.bind(this));
     this._socket.on("error",   this._onSocketError.bind(this));
@@ -69,27 +75,49 @@ Telnet.prototype.connect = function(params) {
 
 Telnet.prototype.close = function() {
     assert(this._socket, "Connection is already closed");
+
+    this._connected = false;
     this._socket.end();
+    this._socket.removeAllListeners();
+    this._socket = null;
 };
 
-Telnet.prototype.requestOption = function(option, onOff) {
+Telnet.prototype.requestOption = function(option) {
+    assert(this._socket && this._connected, "Not connected");
+    assert(false, "Not implemented");
+};
+
+Telnet.prototype.rejectOption = function(option) {
+    assert(this._socket && this._connected, "Not connected");
     assert(false, "Not implemented");
 };
 
 Telnet.prototype.subnegotiateOption = function(option, buffer) {
+    assert(this._socket && this._connected, "Not connected");
     assert(false, "Not implemented");
 };
 
 Telnet.prototype.send = function(buffer) {
     assert(this._socket && this._connected, "Not connected");
 
-    this._socket.write(telnetutil.escapeSendData(buffer));
+    this._socket.write(TelnetUtil.escapeSendData(buffer));
 };
+
+// PUBLIC PROPERTIES
+
+Object.defineProperty(Telnet.prototype, "isConnected", {
+    get: function() {
+        return this._connected;
+    },
+    enumerable: true
+});
+
 
 // PRIVATE METHODS
 
 Telnet.prototype._onSocketConnect = function() {
     log("connect");
+    this._connected = true;
     this.emit("connect");
 };
 
@@ -128,7 +156,7 @@ Telnet.prototype._processData = function(buffer) {
 
             case STATE_WILL:
             case STATE_DO:
-                this._prevBuffers.push(buffer.slice(startIndex, i - startIndex));
+                this._buffer.push(buffer.slice(startIndex, i));
                 this._acceptOption(val);
                 startIndex = i + 1;
                 state = STATE_READ;
@@ -136,7 +164,7 @@ Telnet.prototype._processData = function(buffer) {
 
             case STATE_WONT:
             case STATE_DONT:
-                this._prevBuffers.push(buffer.slice(startIndex, i - startIndex));
+                this._buffer.push(buffer.slice(startIndex, i));
                 this._rejectOption(val);
                 startIndex = i + 1;
                 state = STATE_READ;
@@ -146,6 +174,7 @@ Telnet.prototype._processData = function(buffer) {
                 switch (val) {
                     // Double IAC is an escaped one, continue
                     case OP.IAC:  state = STATE_READ; break;
+
                     case OP.WILL: state = STATE_WILL; break;
                     case OP.WONT: state = STATE_WONT; break;
                     case OP.DO:   state = STATE_DO;   break;
@@ -153,7 +182,7 @@ Telnet.prototype._processData = function(buffer) {
                     case OP.SB:   state = STATE_SB;   break;
 
                     default:
-                        log("Prev buffers: ", this._prevBuffers);
+                        log("Prev buffer: ", this._buffer);
                         log("Cur buffer: ", buffer.slice(startIndex));
                         assert(false, "Invalid val", val, "after IAC");
                 }
@@ -171,8 +200,10 @@ Telnet.prototype._processData = function(buffer) {
                 }
                 else {
                     assert(val === OP.SE, "Expected SE after SB IAC");
-                    this._prevBuffers.push(buffer.slice(startIndex, i - startIndex));
+                    this._buffer.push(buffer.slice(startIndex, i));
                     this._emitSubnegotiation();
+                    startIndex = i + 1;
+                    state = STATE_READ;
                 }
                 break;
 
@@ -185,7 +216,7 @@ Telnet.prototype._processData = function(buffer) {
     // need to keep what is left until we get more data to know what
     // to do with it.
     if (startIndex < buffer.length) {
-        this._prevBuffers.push(buffer.slice(startIndex));
+        this._buffer.push(buffer.slice(startIndex));
     }
 
     // Any other state than STATE_READ and we have to wait for more
@@ -197,11 +228,55 @@ Telnet.prototype._processData = function(buffer) {
 
 };
 
-Telnet.prototype._emitData = function(buffer, startIndex, endIndex) {
-    assert(startIndex >= 0);
+Telnet.prototype._emitData = function() {
+    var buffer = this._buffer.getBuffer();
+    this._buffer.clear();
+    this.emit("data", TelnetUtil.unescapeSendData(buffer));
+};
 
-    var bufPiece = buffer.slice(startIndex, length);
-    this.emit("data", bufPiece);
+// Server accepts/wants this option
+Telnet.prototype._acceptOption = function(option) {
+    var opt = this._options[option];
+    if (opt) {
+        if (opt.state === "requested" || opt.state === "proposed") {
+            opt.state = "done";
+            opt.on = true;
+            this.emit("optionAccepted", option);
+        }
+        else {
+            assert(false, "Changing option values after negotiated not impl", option);
+        }
+    }
+    else {
+        this._options[option] = {
+            state: "proposed",
+            on: true
+        };
+        this.emit("optionRequested", option);
+    }
+};
+
+// Server rejects/doesn't want this option
+Telnet.prototype._rejectOption = function(option) {
+    var opt = this._options[option];
+    if (opt) {
+        if (opt.state === "requested" || opt.state === "proposed") {
+            opt.state = "done";
+            opt.on = false;
+            this.emit("optionRejected", option);
+        }
+        else {
+            assert(false, "Changing option values after negotiated not impl", option);
+        }
+    }
+    else {
+        // Server gets the final say
+        this._options[option] = {
+            state: "done",
+            on: false
+        };
+        this.emit("optionRejected", option);
+    }
 };
 
 

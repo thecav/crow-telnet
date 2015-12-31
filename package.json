@@ -2,7 +2,7 @@
   "name": "crow-telnet",
   "version": "0.0.1",
   "description": "Node js telnet client",
-  "main": "src/crow.js",
+  "main": "src/telnet.js",
   "scripts": {
     "test": "./node_modules/.bin/mocha test"
   },
