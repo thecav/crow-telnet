@@ -10,6 +10,7 @@ describe("BufferList", function() {
         assert.isFunction(BufferList);
         assert.deepEqual(Object.keys(BufferList.prototype), [
             "push",
+            "pop",
             "clear",
             "get",
             "getBuffer",
@@ -62,6 +63,61 @@ describe("BufferList", function() {
 
         bufList.push(bufferA);
         assert(bufList.length === 7);
+    });
+
+    it("method: pop(amount)", function() {
+        var bufList = new BufferList();
+
+        bufList.pop(0);
+
+        assert.throws(function() {
+            bufList.pop(1);
+        });
+        assert.throws(function() {
+            bufList.pop(-1);
+        });
+
+        var bufferA = new Buffer([1, 2, 3, 4]);
+        bufList.push(bufferA);
+        assert(bufList.getBuffer().compare(bufferA) === 0);
+
+        assert.throws(function() {
+            bufList.pop(5);
+        });
+
+        bufList.pop(0);
+        assert(bufList.getBuffer().compare(bufferA) === 0);
+
+        bufList.pop(1);
+        assert(bufList.getBuffer().compare(new Buffer([1, 2, 3])) === 0);
+
+        bufList.pop(2);
+        assert(bufList.length === 1);
+
+        bufList.clear();
+        bufList.push(new Buffer([1]));
+        bufList.push(new Buffer([2]));
+        bufList.push(new Buffer([3]));
+        bufList.push(new Buffer([4]));
+        assert(bufList.getBuffer().compare(new Buffer([1, 2, 3, 4])) === 0);
+
+        bufList.pop(1);
+        assert(bufList.getBuffer().compare(new Buffer([1, 2, 3])) === 0);
+
+        bufList.pop(2);
+        assert(bufList.getBuffer().compare(new Buffer([1])) === 0);
+
+
+        bufList.clear();
+        bufList.push(new Buffer([1]));
+        bufList.push(new Buffer([2, 3, 4]));
+        bufList.push(new Buffer([5, 6]));
+        bufList.push(new Buffer([4]));
+        assert(bufList.length === 7);
+
+        bufList.pop(4);
+        assert(bufList.getBuffer().compare(new Buffer([1, 2, 3])) === 0);
+
     });
 
     it("method: get(index)", function() {

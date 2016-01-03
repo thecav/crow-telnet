@@ -1,5 +1,6 @@
 
 var assert = require('assert');
+var util = require('util');
 
 
 module.exports = {
@@ -72,7 +73,7 @@ module.exports = {
 
         // Should be even since there should never be a lone IAC within
         // an escaped data buffer
-        assert(numFF % 2 === 0);
+        assert(numFF % 2 === 0, "Single IAC, Buffer: " + util.inspect(buffer));
 
         var newBuf = new Buffer(buffer.length - (numFF / 2));
         var index = 0;

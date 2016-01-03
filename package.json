@@ -4,7 +4,7 @@
   "description": "Node js telnet client",
   "main": "src/telnet.js",
   "scripts": {
-    "test": "./node_modules/.bin/mocha test"
+    "test": "mocha test"
   },
   "repository": {
     "type": "git",

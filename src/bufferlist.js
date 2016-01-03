@@ -30,6 +30,24 @@ BufferList.prototype.push = function(buffer) {
     this._buffers.push(buffer);
 };
 
+BufferList.prototype.pop = function(amount) {
+    assert(typeof amount === "number");
+    assert(amount >= 0);
+    assert(this.length - amount >= 0, "Popping too much, amount: " + amount + ", length: " + this.length);
+
+    for (var i = this._buffers.length - 1; i >= 0; --i) {
+        var buf = this._buffers[i];
+        if (amount <= buf.length) {
+            this._buffers[i] = buf.slice(0, buf.length - amount);
+            break;
+        }
+        else {
+            amount -= buf.length;
+            this._buffers.length = this._buffers.length - 1;
+        }
+    }
+};
+
 BufferList.prototype.clear = function() {
     this._buffers.length = 0;
 };

@@ -65,10 +65,18 @@ TestSocket.prototype.write = function(buffer) {
     this.emit("testWrite", buffer);
 };
 
-TestSocket.prototype.read = function(buffer) {
-    this.bytesRead += buffer.length;
-    this._receivedBuf.push(buffer);
-    this.emit("data", buffer);
+TestSocket.prototype.input = function(buffer) {
+    if (!Array.isArray(buffer)) {
+        buffer = [buffer];
+    }
+
+    buffer.forEach(function(buf) {
+        assert(Buffer.isBuffer(buf));
+
+        this.bytesRead += buf.length;
+        this._receivedBuf.push(buf);
+        this.emit("data", buf);
+    }, this);
 };
 
 TestSocket.prototype.resetStats = function() {

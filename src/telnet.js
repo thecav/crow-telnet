@@ -147,60 +147,74 @@ Telnet.prototype._processData = function(buffer) {
     var startIndex = 0;
     for (var i = 0; i < buffer.length; ++i) {
         var val = buffer[i];
+        log("  state: " + this._dataState + ", val: " + val + ", i: " + i + ", startIndex: " + startIndex);
         switch (this._dataState) {
             case STATE_READ:
                 if (val === OP.IAC) {
-                    state = STATE_IAC;
+                    this._dataState = STATE_IAC;
                 }
                 break;
 
             case STATE_WILL:
             case STATE_DO:
-                this._buffer.push(buffer.slice(startIndex, i));
+                assert(this._buffer.length === 0, "Buffer not empty: " + util.inspect(this._buffer));
                 this._acceptOption(val);
                 startIndex = i + 1;
-                state = STATE_READ;
+                this._dataState = STATE_READ;
                 break;
 
             case STATE_WONT:
             case STATE_DONT:
-                this._buffer.push(buffer.slice(startIndex, i));
+                assert(this._buffer.length === 0);
                 this._rejectOption(val);
                 startIndex = i + 1;
-                state = STATE_READ;
+                this._dataState = STATE_READ;
                 break;
 
             case STATE_IAC:
                 switch (val) {
                     // Double IAC is an escaped one, continue
-                    case OP.IAC:  state = STATE_READ; break;
+                    case OP.IAC:  this._dataState = STATE_READ; break;
 
-                    case OP.WILL: state = STATE_WILL; break;
-                    case OP.WONT: state = STATE_WONT; break;
-                    case OP.DO:   state = STATE_DO;   break;
-                    case OP.DONT: state = STATE_DONT; break;
-                    case OP.SB:   state = STATE_SB;   break;
+                    case OP.WILL: this._dataState = STATE_WILL; break;
+                    case OP.WONT: this._dataState = STATE_WONT; break;
+                    case OP.DO:   this._dataState = STATE_DO;   break;
+                    case OP.DONT: this._dataState = STATE_DONT; break;
+                    case OP.SB:   this._dataState = STATE_SB;   break;
 
                     default:
                         log("Prev buffer: ", this._buffer);
                         log("Cur buffer: ", buffer.slice(startIndex));
-                        assert(false, "Invalid val", val, "after IAC");
+                        assert(false, "Invalid val " + val + " after IAC");
                 }
+
+                if (val !== OP.IAC) {
+                    // Since now we know that last IAC we got was actually the start
+                    // of a command and not just an escaped IAC in the data, we need
+                    // to emit the data that accumulated thus far up until this last
+                    // IAC.
+                    this._buffer.push(buffer.slice(startIndex, i + 1));
+                    this._buffer.pop(2);
+                    this._emitData();
+                    startIndex = i + 1;
+                }
+
                 break;
 
             case STATE_SB:
                 if (val === OP.IAC) {
-                    state = STATE_SB_IAC;
+                    this._dataState = STATE_SB_IAC;
                 }
                 break;
 
             case STATE_SB_IAC:
                 if (val === OP.IAC) {
-                    state = STATE_SB;
+                    this._dataState = STATE_SB;
                 }
                 else {
                     assert(val === OP.SE, "Expected SE after SB IAC");
-                    this._buffer.push(buffer.slice(startIndex, i));
+                    this._buffer.push(buffer.slice(startIndex, i + 1));
+                    this._buffer.pop(2);
                     this._emitSubnegotiation();
                     startIndex = i + 1;
                     state = STATE_READ;
@@ -222,16 +236,20 @@ Telnet.prototype._processData = function(buffer) {
     // Any other state than STATE_READ and we have to wait for more
     // data to know for sure what to do with what is left.  End on
     // STATE_READ and we should emit to observers what we have
-    if (state === STATE_READ) {
+    if (this._dataState === STATE_READ) {
         this._emitData();
     }
 
 };
 
 Telnet.prototype._emitData = function() {
-    var buffer = this._buffer.getBuffer();
-    this._buffer.clear();
-    this.emit("data", TelnetUtil.unescapeSendData(buffer));
+    if (this._buffer.length > 0) {
+        var buffer = this._buffer.getBuffer();
+        this._buffer.clear();
+        var outputData = TelnetUtil.unescapeSendData(buffer);
+        log("Event data: ", outputData);
+        this.emit("data", outputData);
+    }
 };
 
 // Server accepts/wants this option
@@ -241,6 +259,7 @@ Telnet.prototype._acceptOption = function(option) {
         if (opt.state === "requested" || opt.state === "proposed") {
             opt.state = "done";
             opt.on = true;
+            log("Event optionAccepted: ", option);
             this.emit("optionAccepted", option);
         }
         else {
@@ -252,8 +271,11 @@ Telnet.prototype._acceptOption = function(option) {
             state: "proposed",
             on: true
         };
+        log("Event optionRequested: ", option);
         this.emit("optionRequested", option);
     }
+
+    this._buffer.clear();
 };
 
 // Server rejects/doesn't want this option
@@ -263,6 +285,7 @@ Telnet.prototype._rejectOption = function(option) {
         if (opt.state === "requested" || opt.state === "proposed") {
             opt.state = "done";
             opt.on = false;
+            log("Event optionRejected: ", option);
             this.emit("optionRejected", option);
         }
         else {
@@ -275,8 +298,11 @@ Telnet.prototype._rejectOption = function(option) {
             state: "done",
             on: false
         };
+        log("Event optionRejected: ", option);
         this.emit("optionRejected", option);
     }
+
+    this._buffer.clear();
 };
 
 
