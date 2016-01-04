@@ -4,6 +4,7 @@ var dns = require('dns');
 var net = require('net');
 var util = require('util');
 var EventEmitter = require('events').EventEmitter;
+var hexdump = require('hexdump-nodejs');
 
 var TelnetUtil = require('./telnetutil');
 var BufferList = require('./bufferlist');
@@ -11,22 +12,82 @@ var BufferList = require('./bufferlist');
 var DEBUG = false;
 
 var OP = {
-    SE:   0xf0,
-    SB:   0xfa,
-    WILL: 0xfb,
-    WONT: 0xfc,
-    DO:   0xfd,
-    DONT: 0xfe,
-    IAC:  0xff,
+    SE:   0xf0,  // End sub-negotiation
+    NOP:  0xf1,  // No-op
+    DM:   0xf2,  // Data-mark
+    BRK:  0xf3,  // Break
+    IP:   0xf4,  // Interrupt process
+    AO:   0xf5,  // Abort output
+    AYT:  0xf6,  // Are you there
+    EC:   0xf7,  // Erase character
+    EL:   0xf8,  // Erase line
+    GA:   0xf9,  // Go ahead
+    SB:   0xfa,  // Start sub-negotiation
+    WILL: 0xfb,  // Will
+    WONT: 0xfc,  // Won't
+    DO:   0xfd,  // Do
+    DONT: 0xfe,  // Don't
+    IAC:  0xff,  // Interrupt as Command
 };
 
+var OPTION = {
+    ECHO:                0x01,  // RFC 857
+    SUPPRESS_GA:         0x03,  // RFC 858
+    STATUS:              0x05,  // RFC 859
+    TIMING_MARK:         0x06,  // RFC 860
+    TERMINAL_TYPE:       0x18,  // RFC 1091
+    WINDOW_SIZE:         0x1f,  // RFC 1073
+    TERMINAL_SPEED:      0x20,  // RFC 1079
+    REMOTE_FLOW_CONTROL: 0x21,  // RFC 1372
+    LINEMODE:            0x22,  // RFC 1184
+    ENV_VARIABLES:       0x24,  // RFC 1408
+
+    MSSP:                0x46,  // Mud Server Status Protocol
+                                // http://webcache.googleusercontent.com/search?q=cache:qWEgTcJh1IoJ:tintin.sourceforge.net/mssp/+&cd=3&hl=en&ct=clnk&gl=us
+
+    MCCP_COMPRESS:       0x55,  // MCCP MUD Compression
+    MCCP_COMPRESS2:      0x56,  // MCCP MUD Compression v2
+                                // http://www.zuggsoft.com/zmud/mcp.htm
+
+    MSP:                 0x5a,  // MUD Sound Protocol
+                                // https://www.zuggsoft.com/zmud/msp.htm
+
+    GMCP:                0xc9,  // Generic MUD Communication Protocol
+                                // http://www.gammon.com.au/gmcp
+};
+
+
+// States of the internal state machine used to process incoming data
+// Initial state is STATE_READ.
+//
+//    |
+//    V
+// STATE_READ <-----------,
+//    |                    \
+//    | IAC                |
+//    V                    |
+// STATE_IAC               |
+//    |                    |
+//    |\                  /|
+//    | `-- STATE_WILL --` |
+//    |     STATE_DO       |
+//    |\                  /|
+//    | `-- STATE_WONT --` |
+//    |     STATE_DONT     |
+//    |\                   |
+//    | `-- STATE_SB       |
+//    |       |  ^         |
+//    |       V  |        /|
+//    |   STATE_SB_IAC --` |
+//     `-._________________/
+//
 
 var STATE_READ   = 0;
 var STATE_IAC    = 1;
 var STATE_WILL   = 2;
 var STATE_WONT   = 3;
 var STATE_DO     = 4;
-var STATE_DONT   = 5
+var STATE_DONT   = 5;
 var STATE_SB     = 6;
 var STATE_SB_IAC = 7;
 
@@ -40,6 +101,10 @@ var log = function() {
     console.log.apply(console, args);
 };
 
+var hex = function(num) {
+    return "0x" + num.toString(16);
+};
+
 
 
 var Telnet = function() {
@@ -50,6 +115,8 @@ var Telnet = function() {
     this._dataState = STATE_READ;
     this._buffer = new BufferList();
 };
+
+Telnet.Option = OPTION;
 
 util.inherits(Telnet, EventEmitter);
 
@@ -131,7 +198,7 @@ Telnet.prototype._onSocketError = function(buffer) {
 };
 
 Telnet.prototype._onSocketData = function(buffer) {
-    log("data", buffer);
+    log("data\n", hexdump(buffer));
     this._processData(buffer);
 };
 
@@ -147,7 +214,7 @@ Telnet.prototype._processData = function(buffer) {
     var startIndex = 0;
     for (var i = 0; i < buffer.length; ++i) {
         var val = buffer[i];
-        log("  state: " + this._dataState + ", val: " + val + ", i: " + i + ", startIndex: " + startIndex);
+        //log("  state: " + this._dataState + ", val: " + val + ", i: " + i + ", startIndex: " + startIndex);
         switch (this._dataState) {
             case STATE_READ:
                 if (val === OP.IAC) {
@@ -172,9 +239,23 @@ Telnet.prototype._processData = function(buffer) {
                 break;
 
             case STATE_IAC:
+                if (val === OP.IAC) {
+                    this._dataState = STATE_READ;
+                    break;
+                }
+
+                // Since now we know that last IAC we got was actually the start
+                // of a command and not just an escaped IAC in the data, we need
+                // to emit all the data that has accumulated thus far up first.
+
+                this._buffer.push(buffer.slice(startIndex, i + 1));
+                this._buffer.pop(2);
+                this._emitData();
+                startIndex = i + 1;
+
+                // Depending on the command, decide what to do next
                 switch (val) {
-                    // Double IAC is an escaped one, continue
-                    case OP.IAC:  this._dataState = STATE_READ; break;
+                    case OP.NOP:  this._dataState = STATE_READ; break;
 
                     case OP.WILL: this._dataState = STATE_WILL; break;
                     case OP.WONT: this._dataState = STATE_WONT; break;
@@ -182,21 +263,32 @@ Telnet.prototype._processData = function(buffer) {
                     case OP.DONT: this._dataState = STATE_DONT; break;
                     case OP.SB:   this._dataState = STATE_SB;   break;
 
-                    default:
-                        log("Prev buffer: ", this._buffer);
-                        log("Cur buffer: ", buffer.slice(startIndex));
-                        assert(false, "Invalid val " + val + " after IAC");
-                }
+                    case OP.AYT:
+                        this._dataState = STATE_READ;
+                        this.emit("areYouThere");
+                        break;
 
-                if (val !== OP.IAC) {
-                    // Since now we know that last IAC we got was actually the start
-                    // of a command and not just an escaped IAC in the data, we need
-                    // to emit the data that accumulated thus far up until this last
-                    // IAC.
-                    this._buffer.push(buffer.slice(startIndex, i + 1));
-                    this._buffer.pop(2);
-                    this._emitData();
-                    startIndex = i + 1;
+                    case OP.GA:
+                        this._dataState = STATE_READ;
+                        this.emit("goAhead");
+                        break;
+
+                    case OP.DM:
+                    case OP.BRK:
+                    case OP.IP:
+                    case OP.AO:
+                    case OP.EC:
+                    case OP.EL:
+                        this._dataState = STATE_READ;
+                        this.emit("error", "Command not implemented: " + hex(val));
+                        break;
+
+                    default:
+                        console.log("Prev buffer: ", this._buffer);
+                        console.log("Cur buffer: ", buffer.slice(startIndex));
+                        console.log("startIndex:", startIndex, "i:", i);
+                        assert(false, "Invalid command " + hex(val));
+                        break;
                 }
 
                 break;
@@ -305,6 +397,21 @@ Telnet.prototype._rejectOption = function(option) {
     this._buffer.clear();
 };
 
+
+var telnet = new Telnet();
+telnet.on("optionRequested", function(option) {
+    console.log("Option Requested: ", option);
+});
+telnet.on("optionRejected", function(option) {
+    console.log("Option Rejected: ", option);
+});
+telnet.on("data", function(buffer) {
+    console.log("Data: ", buffer);
+});
+telnet.connect({
+    host: "alteraeon.com",
+    port: 3000
+});
 
 
 module.exports = Telnet;

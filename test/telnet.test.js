@@ -20,6 +20,12 @@ var testForEach = function(cases, callback) {
 
 describe("Telnet", function() {
 
+    var B = function() {
+        var args = Array.prototype.slice.call(arguments);
+        return new Buffer(args);
+    };
+
+
     it("structure", function() {
         assert.isFunction(Telnet);
         assert.deepEqual(
@@ -223,20 +229,25 @@ describe("Telnet", function() {
             },
             {
                 // Escaped IAC in the data
-                inputData:  [B(1, 255, 255, 3)],
-                outputData: [B(1, 255, 3)],
+                inputData:  [B(1, 0xff, 0xff, 3)],
+                outputData: [B(1, 0xff, 3)],
             },
             {
                 // No data event emitted because we're stuck
                 // waiting to see this last IAC is going to
                 // be escaped or the start of a command
-                inputData:  [B(1, 2, 255)],
+                inputData:  [B(1, 2, 0xff)],
                 outputData: [],
             },
             {
                 // Escaped IAC split over 2 packets
-                inputData:  [B(1, 2, 255), B(255, 3)],
-                outputData: [B(1, 2, 255, 3)],
+                inputData:  [B(1, 2, 0xff), B(0xff, 3)],
+                outputData: [B(1, 2, 0xff, 3)],
+            },
+            {
+                // NOP split across packets
+                inputData:  [B(1, 2, 0xff), B(0xf1, 3)],
+                outputData: [B(1, 2), B(3)],
             },
         ];
 
@@ -258,11 +269,6 @@ describe("Telnet", function() {
     });
 
     it("data: accept/reject options", function() {
-
-        var B = function() {
-            var args = Array.prototype.slice.call(arguments);
-            return new Buffer(args);
-        };
 
         var cases = [
             {
@@ -360,6 +366,75 @@ describe("Telnet", function() {
             assert.deepEqual(outputData,    item.outputData);
             assert.deepEqual(acceptOptions, item.acceptOptions);
             assert.deepEqual(rejectOptions, item.rejectOptions);
+        });
+
+    });
+
+    it("command: NOP", function() {
+        var socket = new TestSocket();
+        var telnet = new Telnet();
+        telnet.connect({ host: "abc.com", port: 1234 }, socket);
+
+        socket.input(B(0xff, 0xf1));
+
+    });
+
+    it("command: AYT", function() {
+        var socket = new TestSocket();
+        var telnet = new Telnet();
+        telnet.connect({ host: "abc.com", port: 1234 }, socket);
+
+        var numCalled = 0;
+        telnet.on("areYouThere", function() {
+            ++numCalled;
+        });
+
+        socket.input(B(0xff, 0xf6));
+        assert.equal(numCalled, 1);
+    });
+
+    it("command: GA", function() {
+        var socket = new TestSocket();
+        var telnet = new Telnet();
+        telnet.connect({ host: "abc.com", port: 1234 }, socket);
+
+        var numCalled = 0;
+        telnet.on("goAhead", function() {
+            ++numCalled;
+        });
+
+        socket.input(B(0xff, 0xf9));
+        assert.equal(numCalled, 1);
+    });
+
+    it("commands not implemented", function() {
+        var socket = new TestSocket();
+        var telnet = new Telnet();
+        telnet.connect({ host: "abc.com", port: 1234 }, socket);
+
+        var numErrors = 0;
+        telnet.on("error", function(err) {
+            ++numErrors;
+        });
+
+        var data = null;
+        telnet.on("data", function(buffer) {
+            data = buffer;
+        });
+
+        var cases = [
+            0xf2,  // Data-mark
+            0xf3,  // Break
+            0xf4,  // Suspend
+            0xf5,  // Abort output
+            0xf7,  // Erase character
+            0xf8,  // Erase line
+        ];
+
+        testForEach(cases, function(command, index) {
+            socket.input(B(0xff, command, 10 + index));
+            assert.equal(numErrors, index + 1);
+            assert.equal(B(10+index).compare(data), 0);
         });
 
     });
