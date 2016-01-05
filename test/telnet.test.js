@@ -1,3 +1,4 @@
+'use strict';
 
 var assert = require('chai').assert;
 var util = require('util');
@@ -405,6 +406,86 @@ describe("Telnet", function() {
 
         socket.input(B(0xff, 0xf9));
         assert.equal(numCalled, 1);
+    });
+
+    it("command: SB", function() {
+
+        var cases = [
+            {
+                inputData:  [B(0xff, 0xfa, 0x46, 0xff, 0xf0)],
+                option:     [0x46],
+                subnegData: [B()]
+            },
+            {
+                inputData:  [B(0xff), B(0xfa, 0x46, 0xff, 0xf0)],
+                option:     [0x46],
+                subnegData: [B()]
+            },
+            {
+                inputData:  [B(0xff, 0xfa), B(0x46, 0xff, 0xf0)],
+                option:     [0x46],
+                subnegData: [B()]
+            },
+            {
+                inputData:  [B(0xff, 0xfa), B(0x46, 0xff), B(0xf0)],
+                option:     [0x46],
+                subnegData: [B()]
+            },
+            {
+                inputData:  [B(0xff, 0xfa, 0x46, 1, 2, 0xff, 0xf0)],
+                option:     [0x46],
+                subnegData: [B(1, 2)]
+            },
+            {
+                inputData:  [B(0xff, 0xfa, 0x46, 1), B(2, 0xff, 0xf0)],
+                option:     [0x46],
+                subnegData: [B(1, 2)]
+            },
+            {
+                // Embedded 255 in SB data
+                inputData:  [B(0xff, 0xfa, 0x46, 0xff, 0xff, 0xff, 0xf0)],
+                option:     [0x46],
+                subnegData: [B(0xff)]
+            },
+            {
+                inputData:  [B(0xff, 0xfa, 1, 5, 0xff, 0xf0,
+                               0xff, 0xfa, 2, 6, 0xff, 0xf0)],
+                option:     [1, 2],
+                subnegData: [B(5), B(6)]
+            },
+            {
+                inputData:  [B(0xff, 0xfa, 1, 5, 0xff), B(0xf0,
+                               0xff, 0xfa, 2, 6, 0xff, 0xf0)],
+                option:     [1, 2],
+                subnegData: [B(5), B(6)]
+            },
+        ];
+        testForEach(cases, function(item) {
+            var socket = new TestSocket();
+            var telnet = new Telnet();
+            telnet.connect({ host: "abc.com", port: 1234 }, socket);
+
+            telnet.on("data", function(buffer) {
+                assert(false, "Unexpected data: ", buffer);
+            });
+
+            telnet.on("error", function(err) {
+                assert(err.indexOf("Received subnegotiation data before agreed") === 0);
+            });
+
+            var gotOptions = [];
+            var gotBuffers = [];
+            telnet.on("subnegotiateData", function(option, buffer) {
+                gotOptions.push(option);
+                gotBuffers.push(buffer);
+            });
+
+            socket.input(item.inputData);
+
+            assert.deepEqual(gotOptions, item.option);
+            assert.deepEqual(gotBuffers, item.subnegData);
+        });
+
     });
 
     it("commands not implemented", function() {

@@ -1,3 +1,4 @@
+'use strict';
 
 var assert = require('assert');
 var dns = require('dns');
@@ -209,12 +210,11 @@ Telnet.prototype._onSocketClose = function(buffer) {
 
 
 Telnet.prototype._processData = function(buffer) {
-    assert(buffer.length > 0);
 
     var startIndex = 0;
     for (var i = 0; i < buffer.length; ++i) {
         var val = buffer[i];
-        //log("  state: " + this._dataState + ", val: " + val + ", i: " + i + ", startIndex: " + startIndex);
+        log("  state: " + this._dataState + ", val: " + val + ", i: " + i + ", startIndex: " + startIndex);
         switch (this._dataState) {
             case STATE_READ:
                 if (val === OP.IAC) {
@@ -309,7 +309,7 @@ Telnet.prototype._processData = function(buffer) {
                     this._buffer.pop(2);
                     this._emitSubnegotiation();
                     startIndex = i + 1;
-                    state = STATE_READ;
+                    this._dataState = STATE_READ;
                 }
                 break;
 
@@ -342,6 +342,25 @@ Telnet.prototype._emitData = function() {
         log("Event data: ", outputData);
         this.emit("data", outputData);
     }
+};
+
+Telnet.prototype._emitSubnegotiation = function() {
+    assert(this._buffer.length >= 1, "Buffer: ", this._buffer.getBuffer());
+
+    var option = this._buffer.get(0);
+    var negotiationData =
+        TelnetUtil.unescapeSendData(this._buffer.getBuffer().slice(1));
+
+    this._buffer.clear();
+
+    var optionState = this._options[option];
+    if (!optionState || optionState.state !== "done") {
+        this.emit("error",
+            "Received subnegotiation data before agreed, option: " +
+            option + " data: " + util.inspect(negotiationData));
+    }
+
+    this.emit("subnegotiateData", option, negotiationData);
 };
 
 // Server accepts/wants this option
@@ -397,6 +416,7 @@ Telnet.prototype._rejectOption = function(option) {
     this._buffer.clear();
 };
 
+/*
 
 var telnet = new Telnet();
 telnet.on("optionRequested", function(option) {
@@ -413,6 +433,18 @@ telnet.connect({
     port: 3000
 });
 
+var mudClient = new MudClient();
+mudClient.connect({ host: ..., port: 123 });
+
+mudClient.ansiColor = true;
+
+mudClient.on("color", function(newColor, oldColor) { ... });
+mudClient.on("text", function(text) { ... });
+mudClient.on("mssp", function(serverInfo) { ... })
+
+
+mudClient.send("look");
+*/
 
 module.exports = Telnet;
 
