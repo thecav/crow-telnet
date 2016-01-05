@@ -23,6 +23,7 @@
   "homepage": "https://github.com/thecav/crow-telnet#readme",
   "devDependencies": {
     "chai": "^3.4.1",
+    "hexdump-nodejs": "^0.1.0",
     "mocha": "^2.3.4"
   }
 }
