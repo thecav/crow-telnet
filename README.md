@@ -2,6 +2,8 @@
 
 Node.js telnet client
 
+[![Build Status](https://travis-ci.org/thecav/crow-telnet.svg?branch=master)](https://travis-ci.org/thecav/crow-telnet)
+
 ## Usage
 
 ```javascript
