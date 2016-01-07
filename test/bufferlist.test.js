@@ -4,7 +4,7 @@ var assert = require('chai').assert;
 var util = require('util');
 var BufferList = require('../src/bufferlist');
 
-
+var describe = function() {}
 describe("BufferList", function() {
 
     it("structure", function() {

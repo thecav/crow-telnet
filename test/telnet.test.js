@@ -19,6 +19,7 @@ var testForEach = function(cases, callback) {
     });
 };
 
+var describe = function() {}
 describe("Telnet", function() {
 
     var B = function() {
